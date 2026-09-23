@@ -29,8 +29,12 @@ export { AlertLabels, type AlertLabelsProps } from './grafana/rules/components/l
 export { type LabelMatcher, type Label } from './grafana/matchers/types';
 export { matchLabelsSet, matchLabels, isLabelMatch, type LabelMatchDetails } from './grafana/matchers/utils';
 
-// Rule targets
-export { getRecordingRulesTargetDataSources } from './grafana/rules/utils/recordingRulesTarget';
+// Data sources
+// These bundle the discovery code, which imports @grafana/runtime/unstable (>=13.2, a declared peer).
+export {
+  getDataSourcesWithValidRecordingTarget,
+  useDataSourcesWithValidRecordingTarget,
+} from './grafana/dataSources/narrowings';
 
 // API endpoints
 export { generatedAPI as notificationsAPIv1beta1 } from '@grafana/api-clients/rtkq/notifications.alerting/v1beta1';

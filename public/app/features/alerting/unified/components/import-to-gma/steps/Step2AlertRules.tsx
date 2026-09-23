@@ -3,8 +3,10 @@ import { useEffect, useMemo } from 'react';
 import { Controller, useFormContext } from 'react-hook-form';
 import { useAsync, useToggle } from 'react-use';
 
-import { isSupportedExternalPrometheusFlavoredRulesSourceType } from '@grafana/alerting/internal';
-import { type DataSourceInstanceSettings } from '@grafana/data';
+import {
+  isSupportedExternalPrometheusFlavoredRulesSourceType,
+  useDataSourcesWithValidRecordingTarget,
+} from '@grafana/alerting/internal';
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import {
@@ -27,7 +29,6 @@ import { DataSourcePicker } from 'app/features/datasources/components/picker/Dat
 import { ProvisioningAwareFolderPicker } from 'app/features/provisioning/components/Shared/ProvisioningAwareFolderPicker';
 import { type RulerRulesConfigDTO } from 'app/types/unified-alerting-dto';
 
-import { useRecordingRulesTargetDataSourcesByUid } from '../../../hooks/useRecordingRulesTargetDataSourcesByUid';
 import { DataSourceType } from '../../../utils/datasource';
 import { stringifyErrorLike } from '../../../utils/misc';
 import { CreateNewFolder } from '../../create-folder/CreateNewFolder';
@@ -69,7 +70,11 @@ export function Step2Content({ step1Completed, step1Skipped, canImport }: Step2C
     formState: { errors },
   } = useFormContext<ImportFormValues>();
 
-  const recordingRulesTargetDataSourcesByUid = useRecordingRulesTargetDataSourcesByUid();
+  const recordingTargets = useDataSourcesWithValidRecordingTarget();
+  const recordingTargetUids = useMemo(
+    () => new Set(recordingTargets.items.map((ds) => ds.uid)),
+    [recordingTargets.items]
+  );
 
   const [
     rulesSource,
@@ -289,16 +294,18 @@ export function Step2Content({ step1Completed, step1Skipped, canImport }: Step2C
                       <DataSourcePicker
                         {...field}
                         alerting
-                        filter={(ds: DataSourceInstanceSettings) =>
+                        // Selecting a source also picks the recording rules target, so wait until the valid targets are known.
+                        disabled={recordingTargets.isLoading}
+                        filter={(ds) =>
                           isSupportedExternalPrometheusFlavoredRulesSourceType(ds.type) &&
                           supportedImportTypes.includes(ds.type)
                         }
                         current={field.value}
-                        onChange={(ds: DataSourceInstanceSettings) => {
+                        onChange={(ds) => {
                           onChange(ds.uid);
                           setValue('rulesDatasourceName', ds.name);
                           // Auto-populate target datasource if not yet selected
-                          if (!getValues('targetDatasourceUID') && recordingRulesTargetDataSourcesByUid.has(ds.uid)) {
+                          if (!getValues('targetDatasourceUID') && recordingTargetUids.has(ds.uid)) {
                             setValue('targetDatasourceUID', ds.uid);
                           }
                         }}
@@ -475,8 +482,15 @@ export function Step2Content({ step1Completed, step1Skipped, canImport }: Step2C
                 'alerting.import-to-gma.step2.target-datasource-desc',
                 'The Prometheus data source to store recording rules in'
               )}
-              invalid={!!errors.targetDatasourceUID}
-              error={errors.targetDatasourceUID?.message}
+              invalid={Boolean(errors.targetDatasourceUID || recordingTargets.error)}
+              error={
+                errors.targetDatasourceUID?.message ??
+                (recordingTargets.error &&
+                  t(
+                    'alerting.recording-rules.target-data-sources-error',
+                    'Failed to load the data sources that can store recording rules'
+                  ))
+              }
               noMargin
             >
               <Controller
@@ -486,8 +500,10 @@ export function Step2Content({ step1Completed, step1Skipped, canImport }: Step2C
                     current={field.value}
                     inputId="recording-rules-target-data-source"
                     noDefault
-                    filter={(ds: DataSourceInstanceSettings) => recordingRulesTargetDataSourcesByUid.has(ds.uid)}
-                    onChange={(ds: DataSourceInstanceSettings) => {
+                    disabled={recordingTargets.isLoading}
+                    isLoading={recordingTargets.isLoading}
+                    filter={(ds) => recordingTargetUids.has(ds.uid)}
+                    onChange={(ds) => {
                       setValue('targetDatasourceUID', ds.uid);
                     }}
                   />

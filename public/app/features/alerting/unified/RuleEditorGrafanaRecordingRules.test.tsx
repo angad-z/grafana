@@ -2,10 +2,12 @@ import { type UserEvent } from '@testing-library/user-event';
 import * as React from 'react';
 import { renderRuleEditor, ui } from 'test/helpers/alertingRuleEditor';
 import { clickSelectOption } from 'test/helpers/selectOptionInTest';
-import { screen, testWithFeatureToggles } from 'test/test-utils';
+import { screen, testWithFeatureToggles, waitFor } from 'test/test-utils';
 import { byRole } from 'testing-library-selector';
 
 import { type FeatureToggles } from '@grafana/data';
+import { config } from '@grafana/runtime';
+import { getDataSourceInstanceList } from '@grafana/runtime/unstable';
 import { mockBoundingClientRect } from '@grafana/test-utils';
 import { contextSrv } from 'app/core/services/context_srv';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
@@ -22,6 +24,14 @@ import { setupPluginsExtensionsHook } from './testSetup/plugins';
 jest.mock('app/core/components/AppChrome/AppChromeUpdate', () => ({
   AppChromeUpdate: ({ actions }: { actions: React.ReactNode }) => <div>{actions}</div>,
 }));
+
+jest.mock('@grafana/runtime/unstable', () => {
+  const actual = jest.requireActual('@grafana/runtime/unstable');
+  return { ...actual, getDataSourceInstanceList: jest.fn(actual.getDataSourceInstanceList) };
+});
+
+const runtime = jest.requireActual('@grafana/runtime/unstable');
+const listMock = jest.mocked(getDataSourceInstanceList);
 
 jest.setTimeout(60 * 1000);
 
@@ -137,4 +147,63 @@ describe('RuleEditor grafana recording rules', () => {
     ['alertingNotificationsStepMode'],
     'cannot create new grafana recording rule with invalid metric name with simplified steps enabled'
   );
+  describe('target data source', () => {
+    afterEach(() => {
+      config.unifiedAlerting.defaultRecordingRulesTargetDatasourceUID = undefined;
+      listMock.mockImplementation(runtime.getDataSourceInstanceList);
+    });
+
+    async function findTargetPicker() {
+      return ui.inputs.dataSource.find(await ui.inputs.targetDatasource.find());
+    }
+
+    it('disables the target picker until the valid targets are known', async () => {
+      let releaseDiscovery = () => {};
+      const released = new Promise<void>((resolve) => {
+        releaseDiscovery = resolve;
+      });
+      listMock.mockImplementation(async (filters) => {
+        await released;
+        return runtime.getDataSourceInstanceList(filters);
+      });
+      renderRuleEditor(undefined, 'grafana-recording');
+
+      const targetPicker = await findTargetPicker();
+      expect(targetPicker).toBeDisabled();
+
+      releaseDiscovery();
+      await waitFor(() => expect(targetPicker).toBeEnabled());
+    });
+
+    it('preselects the configured default target when it accepts recording rules', async () => {
+      config.unifiedAlerting.defaultRecordingRulesTargetDatasourceUID = PROMETHEUS_DATASOURCE_UID;
+      renderRuleEditor(undefined, 'grafana-recording');
+
+      const targetPicker = await findTargetPicker();
+
+      await waitFor(() => expect(targetPicker).toHaveAttribute('placeholder', 'Prom'));
+    });
+
+    it('does not preselect a configured default target that opts out of recording rules', async () => {
+      setupDataSources(
+        mockDataSource(
+          {
+            type: 'prometheus',
+            name: 'Prom',
+            uid: PROMETHEUS_DATASOURCE_UID,
+            isDefault: true,
+            jsonData: { allowAsRecordingRulesTarget: false },
+          },
+          { alerting: true, module: 'core:plugin/prometheus' }
+        )
+      );
+      config.unifiedAlerting.defaultRecordingRulesTargetDatasourceUID = PROMETHEUS_DATASOURCE_UID;
+      renderRuleEditor(undefined, 'grafana-recording');
+
+      const targetPicker = await findTargetPicker();
+      await waitFor(() => expect(targetPicker).toBeEnabled());
+
+      expect(targetPicker).toHaveAttribute('placeholder', 'Select data source');
+    });
+  });
 });

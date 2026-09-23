@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Controller, FormProvider, type SubmitHandler, useForm, useFormContext } from 'react-hook-form';
 import { useToggle } from 'react-use';
 
-import { isSupportedExternalPrometheusFlavoredRulesSourceType } from '@grafana/alerting/internal';
-import { type DataSourceInstanceSettings } from '@grafana/data';
+import {
+  isSupportedExternalPrometheusFlavoredRulesSourceType,
+  useDataSourcesWithValidRecordingTarget,
+} from '@grafana/alerting/internal';
 import { Trans, t } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
 import {
@@ -25,7 +27,6 @@ import {
 import { DataSourcePicker } from 'app/features/datasources/components/picker/DataSourcePicker';
 import { ProvisioningAwareFolderPicker } from 'app/features/provisioning/components/Shared/ProvisioningAwareFolderPicker';
 
-import { useRecordingRulesTargetDataSourcesByUid } from '../../hooks/useRecordingRulesTargetDataSourcesByUid';
 import { getAlertRulesNavId } from '../../navigation/useAlertRulesNav';
 import { type Folder } from '../../types/rule-form';
 import { DataSourceType } from '../../utils/datasource';
@@ -57,6 +58,12 @@ export interface ImportFormValues {
 
 export const supportedImportTypes: string[] = [DataSourceType.Prometheus, DataSourceType.Loki];
 
+interface RecordingTargets {
+  uids: Set<string>;
+  isLoading: boolean;
+  error?: Error;
+}
+
 const ImportToGMARules = () => {
   const formAPI = useForm<ImportFormValues>({
     defaultValues: {
@@ -84,6 +91,11 @@ const ImportToGMARules = () => {
   const [selectedDatasourceName, importSource] = watch(['selectedDatasourceName', 'importSource']);
 
   const [formImportPayload, setFormImportPayload] = useState<ImportFormValues | null>(null);
+  const { items, isLoading, error } = useDataSourcesWithValidRecordingTarget();
+  const recordingTargets = useMemo(
+    () => ({ uids: new Set(items.map((ds) => ds.uid)), isLoading, error }),
+    [items, isLoading, error]
+  );
   const isImportYamlEnabled = config.featureToggles.alertingImportYAMLUI;
 
   const onSubmit: SubmitHandler<ImportFormValues> = async (formData) => {
@@ -137,12 +149,12 @@ const ImportToGMARules = () => {
                 />
               </Field>
 
-              {importSource === 'datasource' && <DataSourceField />}
+              {importSource === 'datasource' && <DataSourceField recordingTargets={recordingTargets} />}
 
               {isImportYamlEnabled && importSource === 'yaml' && (
                 <>
                   <YamlFileUpload />
-                  <YamlTargetDataSourceField />
+                  <YamlTargetDataSourceField recordingTargets={recordingTargets} />
                 </>
               )}
               {/* Optional settings */}
@@ -207,7 +219,7 @@ const ImportToGMARules = () => {
                   </InlineFieldRow>
 
                   <Box marginLeft={1} width={50}>
-                    <TargetDataSourceForRecordingRulesField />
+                    <TargetDataSourceForRecordingRulesField recordingTargets={recordingTargets} />
                   </Box>
                 </Box>
               </Collapse>
@@ -294,14 +306,12 @@ function YamlFileUpload() {
   );
 }
 
-function YamlTargetDataSourceField() {
+function YamlTargetDataSourceField({ recordingTargets }: { recordingTargets: RecordingTargets }) {
   const {
     formState: { errors },
     setValue,
     getValues,
   } = useFormContext<ImportFormValues>();
-  const recordingRulesTargetDataSourcesByUid = useRecordingRulesTargetDataSourcesByUid();
-
   return (
     <Field
       label={t('alerting.import-to-gma.yaml.target-datasource', 'Target data source')}
@@ -323,11 +333,13 @@ function YamlTargetDataSourceField() {
             noDefault
             inputId="yaml-target-data-source"
             alerting
-            filter={(ds: DataSourceInstanceSettings) => isSupportedExternalPrometheusFlavoredRulesSourceType(ds.type)}
-            onChange={(ds: DataSourceInstanceSettings) => {
+            // Selecting a source also picks the recording rules target, so wait until the valid targets are known.
+            disabled={recordingTargets.isLoading}
+            filter={(ds) => isSupportedExternalPrometheusFlavoredRulesSourceType(ds.type)}
+            onChange={(ds) => {
               setValue('yamlImportTargetDatasourceUID', ds.uid);
               const recordingRulesTargetDs = getValues('targetDatasourceUID');
-              if (!recordingRulesTargetDs && recordingRulesTargetDataSourcesByUid.has(ds.uid)) {
+              if (!recordingRulesTargetDs && recordingTargets.uids.has(ds.uid)) {
                 setValue('targetDatasourceUID', ds.uid);
               }
             }}
@@ -344,14 +356,12 @@ function YamlTargetDataSourceField() {
   );
 }
 
-function TargetDataSourceForRecordingRulesField() {
+function TargetDataSourceForRecordingRulesField({ recordingTargets }: { recordingTargets: RecordingTargets }) {
   const {
     control,
     formState: { errors },
     setValue,
   } = useFormContext<ImportFormValues>();
-  const recordingRulesTargetDataSourcesByUid = useRecordingRulesTargetDataSourcesByUid();
-
   return (
     <Field
       required
@@ -361,8 +371,15 @@ function TargetDataSourceForRecordingRulesField() {
         'The Prometheus data source to store recording rules in'
       )}
       htmlFor="recording-rules-target-data-source"
-      error={errors.targetDatasourceUID?.message}
-      invalid={!!errors.targetDatasourceUID?.message}
+      error={
+        errors.targetDatasourceUID?.message ??
+        (recordingTargets.error &&
+          t(
+            'alerting.recording-rules.target-data-sources-error',
+            'Failed to load the data sources that can store recording rules'
+          ))
+      }
+      invalid={Boolean(errors.targetDatasourceUID?.message || recordingTargets.error)}
       noMargin
     >
       <Controller<ImportFormValues, 'targetDatasourceUID'>
@@ -372,8 +389,10 @@ function TargetDataSourceForRecordingRulesField() {
             current={field.value}
             inputId="recording-rules-target-data-source"
             noDefault
-            filter={(ds: DataSourceInstanceSettings) => recordingRulesTargetDataSourcesByUid.has(ds.uid)}
-            onChange={(ds: DataSourceInstanceSettings) => {
+            disabled={recordingTargets.isLoading}
+            isLoading={recordingTargets.isLoading}
+            filter={(ds) => recordingTargets.uids.has(ds.uid)}
+            onChange={(ds) => {
               setValue('targetDatasourceUID', ds.uid);
             }}
           />
@@ -440,15 +459,13 @@ function TargetFolderField() {
   );
 }
 
-function DataSourceField() {
+function DataSourceField({ recordingTargets }: { recordingTargets: RecordingTargets }) {
   const {
     control,
     formState: { errors },
     setValue,
     getValues,
   } = useFormContext<ImportFormValues>();
-  const recordingRulesTargetDataSourcesByUid = useRecordingRulesTargetDataSourcesByUid();
-
   return (
     <Field
       label={
@@ -479,14 +496,16 @@ function DataSourceField() {
             {...field}
             width={50}
             inputId="datasource-picker"
-            onChange={(ds: DataSourceInstanceSettings) => {
+            // Selecting a source also picks the recording rules target, so wait until the valid targets are known.
+            disabled={recordingTargets.isLoading}
+            onChange={(ds) => {
               setValue('selectedDatasourceUID', ds.uid);
               setValue('selectedDatasourceName', ds.name);
 
               // If we've chosen a Prometheus data source, we can set the recording rules target data source to the same as the source
               const recordingRulesTargetDs = getValues('targetDatasourceUID');
               if (!recordingRulesTargetDs) {
-                const targetDataSourceUID = recordingRulesTargetDataSourcesByUid.has(ds.uid) ? ds.uid : undefined;
+                const targetDataSourceUID = recordingTargets.uids.has(ds.uid) ? ds.uid : undefined;
                 setValue('targetDatasourceUID', targetDataSourceUID);
               }
             }}
