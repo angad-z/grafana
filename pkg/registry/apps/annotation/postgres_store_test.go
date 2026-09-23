@@ -2,9 +2,12 @@ package annotation
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -350,6 +353,64 @@ func TestIntegrationPostgresCleanup(t *testing.T) {
 		assert.Contains(t, remaining, getPartitionName(current.UnixMilli()), "current partition should be kept by the 24h floor")
 		assert.NotContains(t, remaining, getPartitionName(old.UnixMilli()), "old partition should be dropped")
 	})
+}
+
+func TestIntegrationPostgresListPartitionPruning(t *testing.T) {
+	store := newTestPostgresStore(t)
+	ns := metav1.NamespaceDefault
+	ctx := k8srequest.WithNamespace(identity.WithServiceIdentityContext(t.Context(), 1), ns)
+
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	from := now.AddDate(0, 0, -7)
+	seed := func(name string, start, end time.Time) {
+		t.Helper()
+		_, err := store.Create(ctx, &annotationV0.Annotation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec:       annotationV0.AnnotationSpec{Text: name, Time: start.UnixMilli(), TimeEnd: new(end.UnixMilli())},
+		})
+		require.NoError(t, err)
+	}
+
+	for weeks := 4; weeks <= 20; weeks++ {
+		at := now.AddDate(0, 0, -7*weeks)
+		seed(fmt.Sprintf("old-%d", weeks), at, at)
+	}
+	seed("recent", now, now)
+	// Starts long before the window but overlaps it, so it lives in a recent partition.
+	seed("long-range", now.AddDate(0, 0, -60), now.Add(-time.Hour))
+
+	opts := ListOptions{From: from.UnixMilli(), To: now.Add(time.Hour).UnixMilli()}
+
+	list, err := store.List(ctx, ns, opts)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"recent", "long-range"}, annotationNames(list))
+
+	query, args := buildListQuery(ns, opts, 0, 100)
+	rows, err := store.pool.Query(ctx, "EXPLAIN "+query, args...)
+	require.NoError(t, err)
+	scanned := map[string]struct{}{}
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		if m := scannedPartition.FindStringSubmatch(line); m != nil {
+			scanned[m[1]] = struct{}{}
+		}
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Equal(t, map[string]struct{}{getPartitionName(now.UnixMilli()): {}}, scanned,
+		"partitions that ended before the window must be pruned")
+}
+
+var scannedPartition = regexp.MustCompile(` on (annotations_\d+w\d+) `)
+
+// partitionOf returns the partition holding the named annotation.
+func partitionOf(t *testing.T, pool *pgxpool.Pool, ns, name string) string {
+	t.Helper()
+	var partition string
+	require.NoError(t, pool.QueryRow(t.Context(),
+		`SELECT tableoid::regclass::text FROM annotations WHERE namespace = $1 AND name = $2`, ns, name).Scan(&partition))
+	return partition
 }
 
 func partitionNameSet(ctx context.Context, t *testing.T, store *PostgreSQLStore) map[string]struct{} {
