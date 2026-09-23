@@ -89,6 +89,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
     noHeader,
     noValue,
     onCellFilterAdded,
+    onFieldAddToAssistant,
     onColumnResize,
     onDisplayedRowIndicesChange,
     onSortByChange,
@@ -255,6 +256,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
   prevConfiguredWidthCount.current = configuredWidthCount;
 
   const contentAwareWidths = useContentAwareWidths({
+    hasAssistantAction: onFieldAddToAssistant != null,
     enabled: contentAwareWidthsEnabled,
     typographyCtx,
     showTypeIcons,
@@ -269,6 +271,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
   const lastColumnExtraPadding = tableRefreshEnabled ? TABLE.CELL_PADDING : 0;
 
   const headerHeight = useHeaderHeight({
+    hasAssistantAction: onFieldAddToAssistant != null,
     columnWidths: widths,
     fields: visibleFields,
     enabled: hasHeader,
@@ -300,6 +303,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
   });
 
   const nestedHeaderHeight = useHeaderHeight({
+    hasAssistantAction: onFieldAddToAssistant != null,
     columnWidths: nestedFieldWidths,
     fields: nestedVisibleFields,
     enabled: hasNestedHeaders,
@@ -450,6 +454,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
       gridRef,
       getCellActions,
       onCellFilterAdded,
+      onFieldAddToAssistant,
       frozenColumns,
       numFrozenColsFullyInView,
       maxRowHeight,
@@ -471,6 +476,7 @@ export function TableNested(props: TableNGProps & { nestedFramesField: Field<Dat
       getTextColorForBackground,
       maxRowHeight,
       onCellFilterAdded,
+      onFieldAddToAssistant,
       rowHeight,
       rowHeightFn,
       setFilter,
