@@ -10,7 +10,11 @@ export {
   isSupportedExternalPrometheusFlavoredRulesSourceType,
   isDataSourceAllowedAsRecordingRulesTarget,
   isValidRecordingRulesTarget,
-  getRecordingRulesTargetDataSources,
-} from './grafana/rules/utils/recordingRulesTarget';
+} from './grafana/dataSources/predicates';
+
+export {
+  getDataSourcesWithValidRecordingTarget,
+  useDataSourcesWithValidRecordingTarget,
+} from './grafana/dataSources/narrowings';
 
 export default {};

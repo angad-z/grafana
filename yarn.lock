@@ -2342,7 +2342,6 @@ __metadata:
     "@faker-js/faker": "npm:^10.6.0"
     "@grafana/api-clients": "npm:13.3.0-pre"
     "@grafana/i18n": "npm:13.3.0-pre"
-    "@grafana/plugin-compat": "npm:^0.1.0"
     "@grafana/test-utils": "workspace:*"
     "@reduxjs/toolkit": "npm:^2.10.1"
     "@testing-library/jest-dom": "npm:^6.6.3"
@@ -2359,6 +2358,7 @@ __metadata:
     react: "npm:19.2.8"
     react-dom: "npm:19.2.8"
     react-redux: "npm:^9.2.0"
+    react-use: "npm:^17.6.1"
     rimraf: "npm:^6.0.1"
     rollup: "npm:^4.60.1"
     rollup-plugin-esbuild: "npm:6.2.1"
@@ -2762,7 +2762,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@grafana/plugin-compat@npm:^0.1.0, @grafana/plugin-compat@workspace:packages/grafana-plugin-compat":
+"@grafana/plugin-compat@workspace:packages/grafana-plugin-compat":
   version: 0.0.0-use.local
   resolution: "@grafana/plugin-compat@workspace:packages/grafana-plugin-compat"
   dependencies:
