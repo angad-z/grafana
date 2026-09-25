@@ -719,14 +719,21 @@ func evaluateExecutionResult(execResults ExecutionResults, scheduledAt time.Time
 	}
 
 	if len(execResults.NoData) > 0 {
-		noData := datasourceUIDsToRefIDs(execResults.NoData)
-		for datasourceUID, refIDs := range noData {
-			appendNoData(data.Labels{
-				"datasource_uid": datasourceUID,
-				"ref_id":         strings.Join(refIDs, ","),
-			})
+		// Before short-circuiting to NoData, check if the condition expression
+		// (e.g. Classic Conditions with OR branches) produced a definitive result.
+		// When one OR branch fires and another returns NoData, the condition
+		// evaluates to Firing (value=1); honour that over raw query-level NoData.
+		// See: https://github.com/grafana/grafana/issues/57961
+		if !conditionHasDefinitiveResult(execResults.Condition) {
+			noData := datasourceUIDsToRefIDs(execResults.NoData)
+			for datasourceUID, refIDs := range noData {
+				appendNoData(data.Labels{
+					"datasource_uid": datasourceUID,
+					"ref_id":         strings.Join(refIDs, ","),
+				})
+			}
+			return evalResults
 		}
-		return evalResults
 	}
 
 	if len(execResults.Condition) == 0 {
@@ -804,6 +811,22 @@ func evaluateExecutionResult(execResults ExecutionResults, scheduledAt time.Time
 	}
 
 	return evalResults
+}
+
+// conditionHasDefinitiveResult returns true if the condition expression produced
+// a non-nil result (Firing or Normal), meaning the expression engine has already
+// resolved any NoData inputs and reached a conclusion. This prevents the query-level
+// NoData short-circuit from overriding a valid condition outcome.
+func conditionHasDefinitiveResult(frames data.Frames) bool {
+	for _, f := range frames {
+		if len(f.Fields) == 1 && f.Fields[0].Type() == data.FieldTypeNullableFloat64 && f.Fields[0].Len() == 1 {
+			val := f.Fields[0].At(0).(*float64)
+			if val != nil {
+				return true // Condition produced a concrete value (0=Normal, 1=Firing)
+			}
+		}
+	}
+	return false
 }
 
 func stateFromVal(val *float64) State {
